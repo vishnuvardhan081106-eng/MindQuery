@@ -8,7 +8,10 @@ venv/
 # ChromaDB
 wellness_db/
 my_db/
+__pycache__/
 mindquery.db
+*.db 
+
 
 # Node
 node_modules/

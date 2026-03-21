@@ -3,7 +3,10 @@ from flask_cors import CORS
 from sentence_transformers import SentenceTransformer
 import chromadb
 from groq import Groq
-import os
+import os    
+import pandas as pd
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+import uuid
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -22,9 +25,30 @@ init_db()
 
 # ── Load RAG tools ────────────────────────────────────────────
 model        = SentenceTransformer('all-MiniLM-L6-v2')
-client       = chromadb.PersistentClient(path="./wellness_db")
+client       = chromadb.EphemeralClient()
 collection   = client.get_or_create_collection(name="wellness")
-groq_client = groq_client  = Groq(api_key=os.getenv("GROQ_API_KEY"))
+groq_client  = Groq(api_key=os.getenv("GROQ_API_KEY"))
+
+# Auto-index on startup
+if collection.count() == 0:
+    print("Indexing dataset...")
+
+    df = pd.read_csv("Mental_Health_FAQ.csv")
+    splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+
+    for _, row in df.iterrows():
+        answer_text   = str(row["Answers"])
+        question_text = str(row["Questions"])
+        unique_id     = str(row["Question_ID"])
+
+        embedding = model.encode(answer_text).tolist()
+        collection.add(
+            documents=[answer_text],
+            embeddings=[embedding],
+            ids=[unique_id],
+            metadatas=[{"question": question_text}]
+        )
+    print(f"Indexed {collection.count()} items!")
 
 # ── RAG function ──────────────────────────────────────────────
 def run_rag(question):
@@ -114,4 +138,5 @@ def remove_session(session_id):
 
 
 if __name__ == "__main__":
-    app.run(debug=False, port=5000)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(debug=False, host="0.0.0.0", port=port)
