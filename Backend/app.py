@@ -5,7 +5,7 @@ import chromadb
 from groq import Groq
 import os    
 import pandas as pd
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 import uuid
 from dotenv import load_dotenv
 load_dotenv()
