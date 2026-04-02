@@ -1,15 +1,11 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from sentence_transformers import SentenceTransformer
 import chromadb
+from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
 from groq import Groq
-import os    
+import os
 import pandas as pd
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-import uuid
 from dotenv import load_dotenv
-load_dotenv()
-
 from database import (
     init_db,
     create_session,
@@ -19,48 +15,42 @@ from database import (
     delete_session
 )
 
+load_dotenv()
+
 app = Flask(__name__)
 CORS(app)
 init_db()
 
 # ── Load RAG tools ────────────────────────────────────────────
-model        = SentenceTransformer('all-MiniLM-L6-v2')
-client       = chromadb.EphemeralClient()
-collection   = client.get_or_create_collection(name="wellness")
-groq_client  = Groq(api_key=os.getenv("GROQ_API_KEY"))
+embedding_fn = SentenceTransformerEmbeddingFunction(
+    model_name="paraphrase-MiniLM-L3-v2"
+)
+client     = chromadb.EphemeralClient()
+collection = client.get_or_create_collection(
+    name="wellness",
+    embedding_function=embedding_fn
+)
+groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
-# Auto-index on startup
+# ── Auto index on startup ─────────────────────────────────────
 if collection.count() == 0:
     print("Indexing dataset...")
-
     df = pd.read_csv("Mental_Health_FAQ.csv")
-    splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
-
     for _, row in df.iterrows():
-        answer_text   = str(row["Answers"])
-        question_text = str(row["Questions"])
-        unique_id     = str(row["Question_ID"])
-
-        embedding = model.encode(answer_text).tolist()
         collection.add(
-            documents=[answer_text],
-            embeddings=[embedding],
-            ids=[unique_id],
-            metadatas=[{"question": question_text}]
+            documents=[str(row["Answers"])],
+            ids=[str(row["Question_ID"])],
+            metadatas=[{"question": str(row["Questions"])}]
         )
     print(f"Indexed {collection.count()} items!")
 
 # ── RAG function ──────────────────────────────────────────────
 def run_rag(question):
-    question_embedding = model.encode(question).tolist()
-
     results = collection.query(
-        query_embeddings=[question_embedding],
+        query_texts=[question],
         n_results=5
     )
-
-    retrieved_chunks = results["documents"][0]
-    context = "\n\n".join(retrieved_chunks)
+    context = "\n\n".join(results["documents"][0])
 
     prompt = f"""You are a compassionate mental wellness assistant.
 Use the context below to answer the question as helpfully as possible.
@@ -86,11 +76,9 @@ Answer:"""
         model="llama-3.3-70b-versatile",
         messages=[{"role": "user", "content": prompt}]
     )
-
     return response.choices[0].message.content
 
 # ── Routes ────────────────────────────────────────────────────
-
 @app.route("/ask", methods=["POST"])
 def ask():
     data       = request.get_json()
@@ -102,22 +90,14 @@ def ask():
 
     if not session_id:
         session_id = create_session(question)
-        save_message(
-            session_id,
-            "bot",
-            "Hi! I am MindQuery. Ask me anything about mental health and wellness."
-        )
+        save_message(session_id, "bot",
+            "Hi! I am MindQuery. Ask me anything about mental health and wellness.")
 
     save_message(session_id, "user", question)
-
     answer = run_rag(question)
-
     save_message(session_id, "bot", answer)
 
-    return jsonify({
-        "answer":     answer,
-        "session_id": session_id
-    })
+    return jsonify({"answer": answer, "session_id": session_id})
 
 
 @app.route("/sessions", methods=["GET"])
@@ -127,8 +107,7 @@ def sessions():
 
 @app.route("/sessions/<int:session_id>", methods=["GET"])
 def load_session(session_id):
-    messages = get_session_messages(session_id)
-    return jsonify(messages)
+    return jsonify(get_session_messages(session_id))
 
 
 @app.route("/sessions/<int:session_id>", methods=["DELETE"])
@@ -140,3 +119,4 @@ def remove_session(session_id):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(debug=False, host="0.0.0.0", port=port)
+
