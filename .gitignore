@@ -11,6 +11,7 @@ my_db/
 __pycache__/
 mindquery.db
 *.db 
+.env
 
 
 # Node
